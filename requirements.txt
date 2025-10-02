@@ -3,3 +3,4 @@ pathlib
 requests
 jinja2
 tqdm
+pyinstaller
