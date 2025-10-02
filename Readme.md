@@ -30,8 +30,8 @@ A Python script to recursively scan a folder, check file hashes against the Viru
 
 1.  **Clone the repository:**
     ```bash
-    git clone <your-repository-url>
-    cd <your-repository-name>
+    git clone https://github.com/PaulBerra/VTsubmitter.git
+    cd VTsubmitter
     ```
 
 2.  **Install dependencies:**
@@ -142,8 +142,8 @@ Prérequis et Installation
     Clonez le dépôt :
     ```Bash
 
-    git clone <url-de-votre-dépôt>
-    cd <nom-du-dépôt>
+    git clone https://github.com/PaulBerra/VTsubmitter.git
+    cd VTsubmitter
     ```
 
 Installez les dépendances :
