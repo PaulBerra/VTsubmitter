@@ -117,29 +117,29 @@ This tool is intended for educational and analytical purposes. Please use it res
 
 Fonctionnalités Principales
 
-    Analyse Récursive : Scanne un répertoire et tous ses sous-répertoires.
+* **Analyse Récursive** : Scanne un répertoire et tous ses sous-répertoires.
 
-    Ciblage Flexible : Analyse tous les fichiers ou filtre par une extension spécifique (ex: .exe, .dll).
+* **Ciblage Flexible** : Analyse tous les fichiers ou filtre par une extension spécifique (ex: .exe, .dll).
 
-    Mode Interactif : Si aucun chemin n'est fourni, le script invite à glisser-déposer un dossier.
+* **Mode Interactif** : Si aucun chemin n'est fourni, le script invite à glisser-déposer un dossier.
 
-    Mise en Cache Intelligente : Les résultats sont stockés dans une base de données locale SQLite (vt_cache.db) pour éviter de ré-analyser les fichiers connus, économisant du temps et des requêtes API.
+* **Mise en Cache Intelligente** : Les résultats sont stockés dans une base de données locale SQLite (vt_cache.db) pour éviter de ré-analyser les fichiers connus, économisant du temps et des requêtes API.
 
-    Performance : Utilise le multithreading pour traiter les fichiers en parallèle, avec une barre de progression.
+* **Performance** : Utilise le multithreading pour traiter les fichiers en parallèle, avec une barre de progression.
 
-    Rotation des Clés API : Utilise à tour de rôle plusieurs clés API VirusTotal définies dans un fichier de configuration.
+* **Rotation des Clés API** : Utilise à tour de rôle plusieurs clés API VirusTotal définies dans un fichier de configuration.
 
-    Configuration Flexible : Tous les paramètres (clés API, durée du cache) sont gérés dans un simple fichier config.ini.
+* **Configuration Flexible** : Tous les paramètres (clés API, durée du cache) sont gérés dans un simple fichier config.ini.
 
-    Exclusion de Dossiers : Permet d'exclure des répertoires spécifiques de l'analyse (ex: .git, node_modules).
+* **Exclusion de Dossiers** : Permet d'exclure des répertoires spécifiques de l'analyse (ex: .git, node_modules).
 
-    Rapports Complets :
+ Rapports Complets :
 
-        Sortie en temps réel dans la console avec niveaux de logs (--verbose, --silent).
+   *  Sortie en temps réel dans la console avec niveaux de logs (--verbose, --silent).
 
-        Un rapport texte détaillé (report.txt).
+   *  Un rapport texte détaillé (report.txt).
 
-        Un rapport HTML riche et interactif (report.html) avec un résumé, des colonnes triables et des liens directs vers VirusTotal.
+   *  Un rapport HTML riche et interactif (report.html) avec un résumé, des colonnes triables et des liens directs vers VirusTotal.
 
 Prérequis et Installation
 
