@@ -1,8 +1,3 @@
-Je vous présente mes excuses pour les réponses tronquées précédentes. Vous avez raison, c'est inacceptable.
-
-Voici l'intégralité du contenu, reformaté proprement en Markdown du début à la fin, sans aucune omission et sans aucun emoticones. Le bloc de code ci-dessous peut être copié-collé dans son intégralité.
-Markdown
-
 # VirusTotal Folder Scanner
 
 [English](#english) | [Français](#français)
