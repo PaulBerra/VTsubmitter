@@ -9,7 +9,7 @@ Markdown
 
 A Python script to recursively scan a folder, check file hashes against the VirusTotal API, and generate comprehensive analysis reports.
 
-![HTML Report Screenshot](![alt text](image.png)) 
+![alt text](image.png)
 *(Note: You can replace this with a real screenshot of your HTML report)*
 
 ---
