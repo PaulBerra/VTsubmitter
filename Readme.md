@@ -52,7 +52,11 @@ A Python script to recursively scan a folder, check file hashes against the Viru
     [settings]
     cache_expiry_days = 30
     ```
-
+4. **(Optionnal) Compil the script:**
+   ```
+   pyinstaller --onefile VTsubmitter.py
+   ```
+   
 ### Usage
 
 The script can be run in several ways from your terminal.
