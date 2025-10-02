@@ -1,0 +1,5 @@
+argparse
+pathlib
+requests
+jinja2
+tqdm

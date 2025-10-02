@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <title>Rapport d'Analyse VirusTotal</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen-Sans, Ubuntu, Cantarell, "Helvetica Neue", sans-serif; margin: 2em; background-color: #f8f9fa; color: #212529; }
+        .container { max-width: 1200px; margin: auto; background: white; padding: 2em; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+        h1, h2 { color: #343a40; border-bottom: 2px solid #dee2e6; padding-bottom: 0.5em; }
+        .summary { display: flex; justify-content: space-around; text-align: center; margin: 2em 0; }
+        .summary-box { padding: 1em 2em; border-radius: 5px; color: white; }
+        .total { background-color: #007bff; }
+        .malicious { background-color: #dc3545; }
+        .suspicious { background-color: #ffc107; color: #212529;}
+        .clean { background-color: #28a745; }
+        table { width: 100%; border-collapse: collapse; margin-top: 1em; }
+        th, td { padding: 12px; border: 1px solid #dee2e6; text-align: left; }
+        th { background-color: #f8f9fa; cursor: pointer; user-select: none; }
+        th:hover { background-color: #e9ecef; }
+        a { color: #007bff; text-decoration: none; }
+        tr.status-malicious { background-color: #f8d7da; }
+        tr.status-suspicious { background-color: #fff3cd; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Rapport d'Analyse VirusTotal</h1>
+        <p><strong>Dossier analysé :</strong> {{ folder_path }}</p>
+        <p><strong>Date du rapport :</strong> {{ report_date }}</p>
+
+        <h2>Résumé</h2>
+        <div class="summary">
+            <div class="summary-box total"><h3>{{ summary.total }}</h3><p>Fichiers Analysés</p></div>
+            <div class="summary-box malicious"><h3>{{ summary.malicious }}</h3><p>Malveillants</p></div>
+            <div class="summary-box suspicious"><h3>{{ summary.suspicious }}</h3><p>Suspects</p></div>
+            <div class="summary-box clean"><h3>{{ summary.clean }}</h3><p>Sains / Inconnus</p></div>
+        </div>
+
+        <h2>Détails</h2>
+        <table id="resultsTable">
+            <thead>
+                <tr>
+                    <th onclick="sortTable(0)">Fichier</th>
+                    <th onclick="sortTable(1)">Détections</th>
+                    <th onclick="sortTable(2)">Statut</th>
+                    <th onclick="sortTable(3)">Hash (SHA-256)</th>
+                </tr>
+            </thead>
+            <tbody>
+            {% for result in results %}
+                <tr class="status-{{ result.report_class }}">
+                    <td>{{ result.path }}</td>
+                    <td>
+                        {% if result.vt_result.malicious is defined %}
+                            {{ result.vt_result.malicious + result.vt_result.suspicious }} / {{ result.vt_result.total_votes }}
+                        {% else %}N/A{% endif %}
+                    </td>
+                    <td><a href="{{ result.vt_result.link or '#' }}" target="_blank">{{ result.vt_result.status }}</a></td>
+                    <td>{{ result.hash[:12] }}...</td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    <script>
+    function sortTable(n) {
+        var table, rows, switching, i, x, y, shouldSwitch, dir, switchcount = 0;
+        table = document.getElementById("resultsTable");
+        switching = true;
+        dir = "asc";
+        while (switching) {
+            switching = false;
+            rows = table.rows;
+            for (i = 1; i < (rows.length - 1); i++) {
+                shouldSwitch = false;
+                x = rows[i].getElementsByTagName("TD")[n];
+                y = rows[i + 1].getElementsByTagName("TD")[n];
+                var xContent = isNaN(parseInt(x.innerHTML)) ? x.innerHTML.toLowerCase() : parseInt(x.innerHTML.split('/')[0].trim());
+                var yContent = isNaN(parseInt(y.innerHTML)) ? y.innerHTML.toLowerCase() : parseInt(y.innerHTML.split('/')[0].trim());
+                if (dir == "asc") {
+                    if (xContent > yContent) { shouldSwitch = true; break; }
+                } else if (dir == "desc") {
+                    if (xContent < yContent) { shouldSwitch = true; break; }
+                }
+            }
+            if (shouldSwitch) {
+                rows[i].parentNode.insertBefore(rows[i + 1], rows[i]);
+                switching = true;
+                switchcount++;
+            } else {
+                if (switchcount == 0 && dir == "asc") {
+                    dir = "desc";
+                    switching = true;
+                }
+            }
+        }
+    }
+    </script>
+</body>
+</html>
