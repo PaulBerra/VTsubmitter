@@ -109,9 +109,6 @@ VT_Analyzer/
 └── report.html               # The HTML report (generated after a scan)
 ```
 
-Disclaimer
-
-This tool is intended for educational and analytical purposes. Please use it responsibly and be mindful of the VirusTotal Public API's rate limits (4 lookups per minute).
 
 <a name="français"></a>Version Française
 
@@ -223,6 +220,3 @@ VT_Analyzer/
 ├── report.txt                # Le rapport texte (généré après une analyse)
 └── report.html               # Le rapport HTML (généré après une analyse)
 ```
-Avertissement
-
-Cet outil est conçu à des fins éducatives et d'analyse. Veuillez l'utiliser de manière responsable et en respectant les limites de l'API publique de VirusTotal (4 requêtes par minute).
