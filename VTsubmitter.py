@@ -8,6 +8,7 @@ import json
 import logging
 import os
 import sqlite3
+import threading
 import time
 import webbrowser
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -23,22 +24,40 @@ from tqdm import tqdm
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 log = logging.getLogger(__name__)
 
-class CacheManager:
-    """Gère la base de données de cache SQLite pour chaque thread."""
+class ThreadSafeCacheManager:
+    """
+    Gère la base de données de cache SQLite de manière thread-safe.
+    Chaque thread obtient sa propre connexion à la base de données pour éviter les conflits
+    et les erreurs "core dumped" courantes avec sqlite3 en multithreading.
+    """
     def __init__(self, db_path="vt_cache.db"):
-        self.conn = sqlite3.connect(db_path, check_same_thread=False)
-        self.cursor = self.conn.cursor()
-        self.cursor.execute("""
-        CREATE TABLE IF NOT EXISTS reports (
-            hash TEXT PRIMARY KEY,
-            report_json TEXT NOT NULL,
-            timestamp DATETIME NOT NULL
-        )""")
-        self.conn.commit()
+        self.db_path = db_path
+        self.thread_local = threading.local()
+        self._initialize_db()
+
+    def _get_connection(self):
+        """Fournit une connexion et un curseur par thread."""
+        if not hasattr(self.thread_local, 'connection'):
+            self.thread_local.connection = sqlite3.connect(self.db_path, check_same_thread=False)
+        return self.thread_local.connection
+
+    def _initialize_db(self):
+        """Crée la table si elle n'existe pas."""
+        conn = self._get_connection()
+        with conn:
+            conn.execute("""
+            CREATE TABLE IF NOT EXISTS reports (
+                hash TEXT PRIMARY KEY,
+                report_json TEXT NOT NULL,
+                timestamp DATETIME NOT NULL
+            )""")
 
     def get_report(self, file_hash, expiry_days=30):
-        self.cursor.execute("SELECT report_json, timestamp FROM reports WHERE hash = ?", (file_hash,))
-        result = self.cursor.fetchone()
+        """Récupère un rapport du cache s'il est valide."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT report_json, timestamp FROM reports WHERE hash = ?", (file_hash,))
+        result = cursor.fetchone()
         if result:
             report_json, timestamp_str = result
             timestamp = datetime.fromisoformat(timestamp_str)
@@ -47,14 +66,23 @@ class CacheManager:
         return None
 
     def set_report(self, file_hash, report):
-        self.cursor.execute("INSERT OR REPLACE INTO reports (hash, report_json, timestamp) VALUES (?, ?, ?)",
-                            (file_hash, json.dumps(report), datetime.now().isoformat()))
-        self.conn.commit()
+        """Insère ou met à jour un rapport dans le cache."""
+        conn = self._get_connection()
+        with conn:
+            conn.execute("INSERT OR REPLACE INTO reports (hash, report_json, timestamp) VALUES (?, ?, ?)",
+                         (file_hash, json.dumps(report), datetime.now().isoformat()))
 
     def close(self):
-        self.conn.close()
+        """
+        Ferme la connexion du thread courant.
+        Bien que Python ferme les connexions à la sortie, c'est une bonne pratique.
+        """
+        if hasattr(self.thread_local, 'connection'):
+            self.thread_local.connection.close()
+            del self.thread_local.connection
 
 def calculate_sha256(filepath):
+    """Calcule le hash SHA256 d'un fichier."""
     sha256_hash = hashlib.sha256()
     try:
         with open(filepath, "rb") as f:
@@ -66,10 +94,12 @@ def calculate_sha256(filepath):
         return None
 
 def query_virustotal(file_hash, api_key):
+    """Interroge l'API VirusTotal pour un hash donné."""
     headers = {"x-apikey": api_key}
     url = f"https://www.virustotal.com/api/v3/files/{file_hash}"
     try:
-        response = requests.get(url, headers=headers)
+        # Ajout d'un timeout pour éviter que la requête ne bloque indéfiniment
+        response = requests.get(url, headers=headers, timeout=30)
         if response.status_code == 200:
             result = response.json()
             stats = result.get("data", {}).get("attributes", {}).get("last_analysis_stats", {})
@@ -78,12 +108,14 @@ def query_virustotal(file_hash, api_key):
         elif response.status_code == 404:
             return {"status": "Inconnu de VirusTotal"}
         else:
+            log.warning(f"Erreur API pour {file_hash}: {response.status_code} - {response.text}")
             return {"status": f"Erreur API ({response.status_code})"}
     except requests.RequestException as e:
         log.error(f"Erreur de connexion pour {file_hash}: {e}")
         return {"status": "Erreur de connexion"}
 
-def process_file(filepath, cache, api_key_cycler, api_delay, force_rescan, expiry_days):
+def process_file(filepath, cache, api_key_cycler, api_key_lock, api_delay, force_rescan, expiry_days):
+    """Traite un seul fichier : calcul du hash, vérification du cache, et requête API."""
     log.debug(f"Traitement de {filepath}")
     file_hash = calculate_sha256(filepath)
     if not file_hash:
@@ -96,8 +128,13 @@ def process_file(filepath, cache, api_key_cycler, api_delay, force_rescan, expir
             return {"path": filepath, "hash": file_hash, "vt_result": cached_report}
 
     log.debug(f"Interrogation de l'API pour {file_hash}")
-    time.sleep(api_delay)
-    api_key = next(api_key_cycler)
+    
+    # Rotation des clés API de manière thread-safe
+    with api_key_lock:
+        api_key = next(api_key_cycler)
+    
+    time.sleep(api_delay) # Respect du délai de l'API
+    
     vt_result = query_virustotal(file_hash, api_key)
     
     if "Erreur" not in vt_result.get("status", ""):
@@ -105,7 +142,19 @@ def process_file(filepath, cache, api_key_cycler, api_delay, force_rescan, expir
         
     return {"path": filepath, "hash": file_hash, "vt_result": vt_result}
 
+def write_text_report_entry(report_file, result):
+    """Écrit une seule entrée dans le rapport texte."""
+    vt = result['vt_result']
+    report_file.write(f"Fichier: {result['path']}\n")
+    report_file.write(f"Hash: {result['hash']}\n")
+    report_file.write(f"Statut: {vt.get('status', 'N/A')}\n")
+    if "malicious" in vt:
+        report_file.write(f"Détections: {vt.get('malicious', 0)}+{vt.get('suspicious', 0)}/{vt.get('total_votes', 0)}\n")
+    report_file.write("-" * 20 + "\n")
+    report_file.flush() # Force l'écriture sur le disque
+
 def generate_html_report(results, output_path, folder_path, summary):
+    """Génère le rapport HTML complet à partir de la liste des résultats."""
     for r in results:
         if r['vt_result'] and r['vt_result'].get('malicious', 0) > 0:
             r['report_class'] = 'malicious'
@@ -114,6 +163,11 @@ def generate_html_report(results, output_path, folder_path, summary):
         else:
             r['report_class'] = 'clean'
 
+    # S'assure que le dossier 'templates' existe
+    if not Path("templates").is_dir():
+        log.critical("Le dossier 'templates' contenant 'report_template.html' est manquant.")
+        return
+
     env = Environment(loader=FileSystemLoader("templates"))
     template = env.get_template("report_template.html")
     html_content = template.render(
@@ -121,15 +175,18 @@ def generate_html_report(results, output_path, folder_path, summary):
         folder_path=folder_path,
         report_date=datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
         summary=summary)
-    with open(output_path, "w", encoding="utf-8") as f:
-        f.write(html_content)
+    try:
+        with open(output_path, "w", encoding="utf-8") as f:
+            f.write(html_content)
+    except IOError as e:
+        log.error(f"Impossible d'écrire le rapport HTML sur {output_path}: {e}")
+
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Analyseur de fichiers amélioré avec cache et multithreading.",
+        description="Analyseur de fichiers amélioré avec cache thread-safe et rapports incrémentaux.",
         epilog="Lancez le script sans argument de chemin pour un prompt interactif."
     )
-    # Le chemin du dossier est maintenant optionnel (nargs='?')
     parser.add_argument("folder_path", nargs='?', default=None, help="Chemin du dossier à analyser (optionnel).")
     parser.add_argument("file_extension", nargs='?', default=None, help="Extension (optionnel: scan de tous les fichiers).")
     parser.add_argument("-c", "--config", default="config.ini", help="Chemin du fichier de configuration.")
@@ -144,13 +201,10 @@ def main():
     
     args = parser.parse_args()
 
-    # --- NOUVEAU BLOC : GESTION DU CHEMIN INTERACTIF ---
     if not args.folder_path:
         if not args.silent:
             try:
-                # Affiche le message et attend l'entrée de l'utilisateur
-                path_from_input = input("➡️  Veuillez glisser-déposer le dossier à analyser dans le terminal, puis appuyez sur Entrée :\n> ")
-                # Nettoie le chemin (enlève les espaces et les guillemets/apostrophes)
+                path_from_input = input("➡️  Veuillez glisser-déposer le dossier à analyser, puis appuyez sur Entrée :\n> ")
                 args.folder_path = path_from_input.strip().strip("'\"")
             except (KeyboardInterrupt, EOFError):
                 log.info("\nOpération annulée par l'utilisateur.")
@@ -159,7 +213,6 @@ def main():
     if not args.folder_path:
         log.critical("Aucun dossier à analyser n'a été fourni.")
         return
-    # --- FIN DU NOUVEAU BLOC ---
 
     if args.verbose: log.setLevel(logging.DEBUG)
     if args.silent: log.setLevel(logging.CRITICAL)
@@ -176,10 +229,11 @@ def main():
         return
 
     api_key_cycler = cycle(api_keys)
+    api_key_lock = threading.Lock() # Verrou pour la rotation des clés
     folder = Path(args.folder_path)
     all_results = []
     excluded_dirs = set(args.exclude_dir or [])
-    api_delay = config.getint('virustotal', 'api_delay_seconds', fallback=16)
+    api_delay = config.getint('virustotal', 'api_delay_seconds', fallback=15)
     expiry_days = config.getint('settings', 'cache_expiry_days', fallback=30)
     
     if not folder.is_dir():
@@ -194,7 +248,10 @@ def main():
             if any(excluded in item.parts for excluded in excluded_dirs):
                 log.debug(f"Exclusion du fichier : {item}")
                 continue
-            if args.file_extension and item.suffix != f".{args.file_extension}":
+            # --- CORRECTION ---
+            # La vérification est maintenant insensible à la casse pour correspondre à des extensions
+            # comme .exe, .EXE, .eXe, etc.
+            if args.file_extension and not item.name.lower().endswith(f".{args.file_extension.lower()}"):
                 continue
             files_to_scan.append(item)
 
@@ -204,33 +261,46 @@ def main():
 
     log.info(f"{len(files_to_scan)} fichier(s) à traiter.")
     
-    cache = CacheManager()
-    with ThreadPoolExecutor(max_workers=4) as executor:
-        futures = {executor.submit(process_file, f, cache, api_key_cycler, api_delay, args.force_rescan, expiry_days): f for f in files_to_scan}
-        
-        for future in tqdm(as_completed(futures), total=len(files_to_scan), desc="Analyse en cours"):
-            result = future.result()
-            if result:
-                all_results.append(result)
-    cache.close()
+    cache = ThreadSafeCacheManager()
+    summary = {"total": len(files_to_scan), "processed": 0, "malicious": 0, "suspicious": 0, "clean": 0, "error": 0}
 
-    log.info("Génération des rapports...")
-    summary = {"total": 0, "malicious": 0, "suspicious": 0, "clean": 0}
-    with open(args.output_txt, "w", encoding="utf-8") as txt_report:
-        for res in sorted(all_results, key=lambda x: str(x['path'])):
-            summary['total'] += 1
-            vt = res['vt_result']
-            if vt.get('malicious', 0) > 0: summary['malicious'] += 1
-            elif vt.get('suspicious', 0) > 0: summary['suspicious'] += 1
-            else: summary['clean'] += 1
+    try:
+        with open(args.output_txt, "w", encoding="utf-8") as txt_report, ThreadPoolExecutor(max_workers=4) as executor:
+            # Création des en-têtes des rapports
+            txt_report.write(f"Rapport d'analyse pour : {folder}\nDate : {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}\n\n")
+            generate_html_report([], args.output_html, folder, summary)
+
+            futures = {executor.submit(process_file, f, cache, api_key_cycler, api_key_lock, api_delay, args.force_rescan, expiry_days): f for f in files_to_scan}
             
-            txt_report.write(f"Fichier: {res['path']}\nHash: {res['hash']}\nStatut: {vt['status']}\n")
-            if "malicious" in vt:
-                txt_report.write(f"Détections: {vt['malicious']}+{vt['suspicious']}/{vt['total_votes']}\n")
-            txt_report.write("-" * 20 + "\n")
+            pbar = tqdm(as_completed(futures), total=len(files_to_scan), desc="Analyse en cours")
+            for future in pbar:
+                result = future.result()
+                summary['processed'] += 1
+                if result:
+                    all_results.append(result)
+                    
+                    vt = result.get('vt_result', {})
+                    if "Erreur" in vt.get('status', ''):
+                        summary['error'] += 1
+                    elif vt.get('malicious', 0) > 0:
+                        summary['malicious'] += 1
+                    elif vt.get('suspicious', 0) > 0:
+                        summary['suspicious'] += 1
+                    else:
+                        summary['clean'] += 1
 
-    generate_html_report(all_results, args.output_html, folder, summary)
+                    # Écriture incrémentale
+                    write_text_report_entry(txt_report, result)
+                    generate_html_report(all_results, args.output_html, folder, summary)
+                    
+                    # Mise à jour de la description de la barre de progression
+                    pbar.set_description(f"Analyse: {summary['malicious']} M / {summary['suspicious']} S")
     
+    except Exception as e:
+        log.critical(f"Une erreur inattendue est survenue: {e}")
+    finally:
+        cache.close()
+
     log.info("Analyse terminée.")
     log.info(f"Rapport texte : {args.output_txt}")
     log.info(f"Rapport HTML : {args.output_html}")
@@ -245,3 +315,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
