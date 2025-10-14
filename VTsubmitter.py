@@ -8,6 +8,7 @@ import json
 import logging
 import os
 import sqlite3
+import sys
 import threading
 import time
 import webbrowser
@@ -23,6 +24,20 @@ from tqdm import tqdm
 # --- Configuration du Logging ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 log = logging.getLogger(__name__)
+
+
+def resource_path(relative_path):
+    """
+    Obtient le chemin absolu vers une ressource, fonctionne pour le développement
+    et pour l'exécutable PyInstaller.
+    """
+    try:
+        # PyInstaller crée un dossier temporaire et stocke son chemin dans _MEIPASS
+        base_path = sys._MEIPASS
+    except Exception:
+        base_path = os.path.abspath(".")
+
+    return os.path.join(base_path, relative_path)
 
 class ThreadSafeCacheManager:
     """
@@ -127,7 +142,7 @@ def process_file(filepath, cache, api_key_cycler, api_key_lock, api_delay, force
             log.debug(f"Résultat trouvé dans le cache pour {file_hash}")
             return {"path": filepath, "hash": file_hash, "vt_result": cached_report}
 
-    log.debug(f"Interrogation de l'API pour {file_hash}")
+    log.debug(f"Interrogation de l'API pour {file_hash} avec {next(api_key_cycler)}")
     
     # Rotation des clés API de manière thread-safe
     with api_key_lock:
@@ -163,12 +178,14 @@ def generate_html_report(results, output_path, folder_path, summary):
         else:
             r['report_class'] = 'clean'
 
-    # S'assure que le dossier 'templates' existe
-    if not Path("templates").is_dir():
-        log.critical("Le dossier 'templates' contenant 'report_template.html' est manquant.")
+    # --- MODIFICATION PYINSTALLER ---
+    # Utilise resource_path pour trouver le dossier des templates
+    templates_path = resource_path("templates")
+    if not Path(templates_path).is_dir():
+        log.critical(f"Le dossier 'templates' contenant 'report_template.html' est manquant à l'emplacement : {templates_path}")
         return
 
-    env = Environment(loader=FileSystemLoader("templates"))
+    env = Environment(loader=FileSystemLoader(templates_path))
     template = env.get_template("report_template.html")
     html_content = template.render(
         results=sorted(results, key=lambda x: str(x['path'])),
@@ -218,10 +235,13 @@ def main():
     if args.silent: log.setLevel(logging.CRITICAL)
 
     config = configparser.ConfigParser()
-    if not Path(args.config).is_file():
+    # --- MODIFICATION PYINSTALLER ---
+    # Utilise resource_path pour trouver le fichier de configuration
+    config_path = resource_path(args.config)
+    if not Path(config_path).is_file():
         log.critical(f"Fichier de configuration '{args.config}' non trouvé.")
         return
-    config.read(args.config)
+    config.read(config_path)
 
     api_keys = [key.strip() for key in config.get('virustotal', 'api_keys', fallback='').split(',') if key.strip()]
     if not api_keys or "VOTRE" in api_keys[0]:
@@ -248,9 +268,6 @@ def main():
             if any(excluded in item.parts for excluded in excluded_dirs):
                 log.debug(f"Exclusion du fichier : {item}")
                 continue
-            # --- CORRECTION ---
-            # La vérification est maintenant insensible à la casse pour correspondre à des extensions
-            # comme .exe, .EXE, .eXe, etc.
             if args.file_extension and not item.name.lower().endswith(f".{args.file_extension.lower()}"):
                 continue
             files_to_scan.append(item)
@@ -266,7 +283,6 @@ def main():
 
     try:
         with open(args.output_txt, "w", encoding="utf-8") as txt_report, ThreadPoolExecutor(max_workers=4) as executor:
-            # Création des en-têtes des rapports
             txt_report.write(f"Rapport d'analyse pour : {folder}\nDate : {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}\n\n")
             generate_html_report([], args.output_html, folder, summary)
 
@@ -289,11 +305,9 @@ def main():
                     else:
                         summary['clean'] += 1
 
-                    # Écriture incrémentale
                     write_text_report_entry(txt_report, result)
                     generate_html_report(all_results, args.output_html, folder, summary)
                     
-                    # Mise à jour de la description de la barre de progression
                     pbar.set_description(f"Analyse: {summary['malicious']} M / {summary['suspicious']} S")
     
     except Exception as e:
